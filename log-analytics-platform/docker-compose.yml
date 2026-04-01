@@ -1,0 +1,313 @@
+x-simulator: &simulator-base
+  build:
+    context: ./simulators
+    dockerfile: Dockerfile
+  depends_on:
+    kafka:
+      condition: service_healthy
+  networks:
+    - lognet
+  restart: on-failure
+
+services:
+  # ── Zookeeper ──────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - lognet
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Kafka ──────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_started
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_MESSAGE_MAX_BYTES: 1048576
+      KAFKA_NUM_PARTITIONS: 6
+    networks:
+      - lognet
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command: >
+      -c "
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic log-events --partitions 6 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic anomaly-alerts --partitions 3 --replication-factor 1 &&
+      echo 'Topics created successfully'
+      "
+    networks:
+      - lognet
+
+  # ── Cassandra ──────────────────────────────────────────
+  cassandra:
+    image: cassandra:4.1
+    container_name: cassandra
+    ports:
+      - "9042:9042"
+    environment:
+      CASSANDRA_CLUSTER_NAME: LogAnalyticsCluster
+      CASSANDRA_DC: dc1
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+    volumes:
+      - cassandra-data:/var/lib/cassandra
+    networks:
+      - lognet
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster'"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+
+  cassandra-init:
+    image: cassandra:4.1
+    container_name: cassandra-init
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    volumes:
+      - ./infra/cassandra-schema.cql:/schema.cql
+    entrypoint: /bin/sh
+    command: >
+      -c "echo 'Waiting for Cassandra...' && sleep 5 && cqlsh cassandra 9042 -f /schema.cql && echo 'Schema initialized'"
+    networks:
+      - lognet
+
+  # ── Spark ──────────────────────────────────────────────
+  spark-master:
+    image: apache/spark:3.5.3-scala2.12-java17-python3-ubuntu
+    container_name: spark-master
+    command: /opt/spark/sbin/start-master.sh
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    environment:
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: 7077
+      SPARK_MASTER_WEBUI_PORT: 8080
+      SPARK_NO_DAEMONIZE: "true"
+    networks:
+      - lognet
+
+  spark-worker:
+    image: apache/spark:3.5.3-scala2.12-java17-python3-ubuntu
+    container_name: spark-worker
+    command: /opt/spark/sbin/start-worker.sh spark://spark-master:7077
+    depends_on:
+      - spark-master
+    environment:
+      SPARK_WORKER_MEMORY: 1G
+      SPARK_WORKER_CORES: 2
+      SPARK_NO_DAEMONIZE: "true"
+    networks:
+      - lognet
+
+  spark-processor:
+    build:
+      context: ./spark-processor
+      dockerfile: Dockerfile
+    container_name: spark-processor
+    depends_on:
+      kafka:
+        condition: service_healthy
+      cassandra:
+        condition: service_healthy
+      spark-master:
+        condition: service_started
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      CASSANDRA_HOST: cassandra
+      CASSANDRA_PORT: "9042"
+      SPARK_MASTER_URL: spark://spark-master:7077
+    networks:
+      - lognet
+    restart: on-failure
+
+  # ── 10 Log Simulators ─────────────────────────────────
+  simulator-auth:
+    <<: *simulator-base
+    container_name: simulator-auth
+    environment:
+      SERVICE_NAME: auth-service
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: log-events
+      EVENTS_PER_SECOND: "120"
+
+  simulator-payments:
+    <<: *simulator-base
+    container_name: simulator-payments
+    environment:
+      SERVICE_NAME: payments-service
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: log-events
+      EVENTS_PER_SECOND: "120"
+
+  simulator-orders:
+    <<: *simulator-base
+    container_name: simulator-orders
+    environment:
+      SERVICE_NAME: orders-service
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: log-events
+      EVENTS_PER_SECOND: "120"
+
+  simulator-inventory:
+    <<: *simulator-base
+    container_name: simulator-inventory
+    environment:
+      SERVICE_NAME: inventory-service
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: log-events
+      EVENTS_PER_SECOND: "120"
+
+  simulator-users:
+    <<: *simulator-base
+    container_name: simulator-users
+    environment:
+      SERVICE_NAME: users-service
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: log-events
+      EVENTS_PER_SECOND: "100"
+
+  simulator-notifications:
+    <<: *simulator-base
+    container_name: simulator-notifications
+    environment:
+      SERVICE_NAME: notifications-service
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: log-events
+      EVENTS_PER_SECOND: "100"
+
+  simulator-gateway:
+    <<: *simulator-base
+    container_name: simulator-gateway
+    environment:
+      SERVICE_NAME: gateway-service
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: log-events
+      EVENTS_PER_SECOND: "100"
+
+  simulator-search:
+    <<: *simulator-base
+    container_name: simulator-search
+    environment:
+      SERVICE_NAME: search-service
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: log-events
+      EVENTS_PER_SECOND: "80"
+
+  simulator-analytics:
+    <<: *simulator-base
+    container_name: simulator-analytics
+    environment:
+      SERVICE_NAME: analytics-service
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: log-events
+      EVENTS_PER_SECOND: "80"
+
+  simulator-email:
+    <<: *simulator-base
+    container_name: simulator-email
+    environment:
+      SERVICE_NAME: email-service
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: log-events
+      EVENTS_PER_SECOND: "80"
+
+  # ── Anomaly Detection Microservice ─────────────────────
+  anomaly-service:
+    build:
+      context: ./anomaly-service
+      dockerfile: Dockerfile
+    container_name: anomaly-service
+    ports:
+      - "8001:8001"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MODEL_PATH: /app/model/isolation_forest.joblib
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - lognet
+    restart: on-failure
+
+  # ── REST API ───────────────────────────────────────────
+  rest-api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: rest-api
+    ports:
+      - "8000:8000"
+    environment:
+      CASSANDRA_HOST: cassandra
+      CASSANDRA_PORT: "9042"
+      CASSANDRA_KEYSPACE: log_analytics
+      ANOMALY_SERVICE_URL: http://anomaly-service:8001
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      anomaly-service:
+        condition: service_started
+    networks:
+      - lognet
+    restart: on-failure
+
+  # ── React Dashboard ────────────────────────────────────
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: dashboard
+    ports:
+      - "3000:80"
+    depends_on:
+      - rest-api
+    networks:
+      - lognet
+
+networks:
+  lognet:
+    driver: bridge
+
+volumes:
+  cassandra-data:

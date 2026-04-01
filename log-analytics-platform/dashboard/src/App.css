@@ -1,0 +1,127 @@
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.main {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 20px 24px;
+  width: 100%;
+}
+
+.controls {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.control-group label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+}
+
+.control-group select,
+.control-group input {
+  padding: 8px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.control-group select:focus,
+.control-group input:focus {
+  border-color: var(--accent-blue);
+}
+
+.btn-refresh {
+  padding: 8px 20px;
+  background: var(--accent-blue);
+  border: none;
+  border-radius: var(--radius);
+  color: white;
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.btn-refresh:hover {
+  opacity: 0.85;
+}
+
+.charts-row {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.chart-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+
+.chart-card h3 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.chart-card.wide {
+  flex: 2;
+  min-width: 0;
+}
+
+.chart-card.narrow {
+  flex: 1;
+  min-width: 280px;
+}
+
+.log-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+
+.log-section h3 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+@media (max-width: 900px) {
+  .charts-row {
+    flex-direction: column;
+  }
+  .chart-card.narrow {
+    min-width: auto;
+  }
+}

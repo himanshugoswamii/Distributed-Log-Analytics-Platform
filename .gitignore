@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+log-analytics-platform/dashboard/build/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# Model artifacts (regenerated during Docker build)
+log-analytics-platform/anomaly-service/model/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Docker volumes
+data/
