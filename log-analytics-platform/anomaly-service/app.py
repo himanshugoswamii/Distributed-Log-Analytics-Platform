@@ -25,7 +25,7 @@ from pydantic import BaseModel
 MODEL_PATH = os.environ.get("MODEL_PATH", "model/isolation_forest.joblib")
 KAFKA_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 ANOMALY_TOPIC = "anomaly-alerts"
-SCORE_THRESHOLD = -0.15
+SCORE_THRESHOLD = float(os.environ.get("SCORE_THRESHOLD", "-0.15"))
 
 LEVEL_MAP = {"INFO": 0, "WARN": 1, "ERROR": 2, "CRITICAL": 3}
 
